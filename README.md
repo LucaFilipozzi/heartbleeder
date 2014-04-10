@@ -72,7 +72,7 @@ $ mkdir $HOME/go
 $ mkdir $HOME/go/{bin,pkg,src}
 $ cd $HOME/go
 $ go get github.com/ziutek/utils
-$ go get githup.com/LucaFilipozzi/heartbleeder
+$ go get github.com/LucaFilipozzi/heartbleeder
 ```
 
 should result in a 'heartbleeder' executable in $GOPATH/bin
