@@ -58,6 +58,7 @@ func test_for_heartbleed(host string) {
 
 func worker(channel chan string, wg *sync.WaitGroup) {
     for host := range channel {
+        fmt.Fprintln(os.Stderr, "checking", host)
         test_for_heartbleed(host)
         wg.Done()
     }
