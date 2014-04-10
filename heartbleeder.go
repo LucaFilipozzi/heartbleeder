@@ -1,20 +1,22 @@
 package main
 
 import (
+    "bufio"
+    "fmt"
     "net"
-	"fmt"
-	"os"
-	"strings"
-    "io/ioutil"
-	"time"
+    "os"
+    "strings"
     "sync"
+    "time"
 
-	"heartbleeder/tls"
+    "github.com/ziutek/utils/netaddr"
+
+    "heartbleeder/tls"
 )
 
 const workers int = 512
 
-func is_vulnerable(host string) bool {
+func test_for_heartbleed(host string) {
     if !strings.Contains(host, ":") {
         host += ":443"
     }
@@ -23,72 +25,83 @@ func is_vulnerable(host string) bool {
         Timeout: 1 * time.Second,
     }
 
-	c, err := tls.DialWithDialer(dialer, "tcp", host, &tls.Config{InsecureSkipVerify: true})
-	if err != nil {
-        return false
-	}
+    c, err := tls.DialWithDialer(dialer, "tcp", host, &tls.Config{InsecureSkipVerify: true})
+    if err != nil {
+        fmt.Fprintln(os.Stdout, "N", host) // not vulnerable - no connection
+        return
+    }
     defer c.Close()
 
-	err = c.WriteHeartbeat(1, nil)
-	if err == tls.ErrNoHeartbeat {
-        return false
-	}
-	if err != nil {
-		fmt.Println("UNKNOWN - Heartbeat enabled, but there was an error writing the payload:", err)
-        return false
-	}
+    err = c.WriteHeartbeat(1, nil)
+    if err == tls.ErrNoHeartbeat {
+        fmt.Fprintln(os.Stdout, "N", host) // not vulnerable - connection but no heartbeat
+        return
+    }
+    if err != nil {
+        fmt.Fprintln(os.Stdout, "E", host, err) // error - connection and heartbeat but error writing payload
+        return
+    }
 
-	readErr := make(chan error)
-	go func() {
-		_, _, err := c.ReadHeartbeat()
-		readErr <- err
-	}()
+    readErr := make(chan error)
+    go func() {
+        _, _, err := c.ReadHeartbeat()
+        readErr <- err
+    }()
 
-	select {
-	case err := <-readErr:
-		if err == nil {
-            return true
-		}
-        return false
-	case <-time.After(1 * time.Second):
-        return false
-	}
+    select {
+        case err := <-readErr:
+            if err == nil {
+                fmt.Fprintln(os.Stdout, "Y", host) // vulernable - successfully read process memory!!
+            } else {
+                fmt.Fprintln(os.Stdout, "N", host) // not vulnerable - unsuccessfully read process memory
+            }
+        case <-time.After(1 * time.Second):
+            fmt.Fprintln(os.Stdout, "N", host) // not vulnerable - connection timed out
+    }
 }
 
-func worker(test chan string, wg *sync.WaitGroup) {
-    for host := range test {
-        if is_vulnerable(host) {
-            fmt.Println(host, "is vulnerable")
-        }
+func worker(channel chan string, wg *sync.WaitGroup) {
+    for host := range channel {
+        test_for_heartbleed(host)
         wg.Done()
     }
 }
 
 func main() {
-    // Read in the hosts to test
-    file, err := ioutil.ReadFile(os.Args[1])
-    if err != nil {
-        os.Exit(1)
-    }
-    lines := strings.Split(string(file), "\n")
+    // set up the channel for worker communication
+    channel := make(chan string, 2 * workers)
 
-    // Set up the wait group
-    wg := &sync.WaitGroup{}
-    wg.Add(len(lines))
+    // set up a wait group to track the workers
+    waitgrp := &sync.WaitGroup{}
 
-    // The channel we will pass info on
-    test := make(chan string, 2 * workers)
-
-    // Spin up the workers
+    // spin up the workers
     for i := 0; i < workers; i++ {
-        go worker(test, wg)
+        go worker(channel, waitgrp)
     }
 
-    // Scanning
-    for _,host := range lines {
-        test <- host
+    // scan each hostname or CIDR address read from stdin
+    scanner := bufio.NewScanner(os.Stdin)
+    for scanner.Scan() {
+        line := scanner.Text()
+        if strings.Contains(line, "/") {
+            ip, ipnet, err := net.ParseCIDR(line)
+            if err != nil {
+                fmt.Fprintln(os.Stderr, "skipping", line, err)
+                continue
+            }
+            fmt.Fprintln(os.Stderr, "scanning", line)
+            for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); ip = netaddr.IPAdd(ip, 1) {
+                waitgrp.Add(1)
+                channel <- ip.String()
+            }
+        } else {
+            fmt.Fprintln(os.Stderr, "scanning", line)
+            waitgrp.Add(1)
+            channel <- line
+        }
     }
 
-    wg.Wait()
-    close(test)
+    // wait for all workers to finish
+    waitgrp.Wait()
+    close(channel)
 }
