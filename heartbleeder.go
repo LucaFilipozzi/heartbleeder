@@ -11,16 +11,12 @@ import (
 
     "github.com/ziutek/utils/netaddr"
 
-    "heartbleeder/tls"
+    "github.com/LucaFilipozzi/heartbleeder/tls"
 )
 
 const workers int = 512
 
 func test_for_heartbleed(host string) {
-    if !strings.Contains(host, ":") {
-        host += ":443"
-    }
-
     dialer := &net.Dialer{
         Timeout: 1 * time.Second,
     }
@@ -83,8 +79,14 @@ func main() {
     scanner := bufio.NewScanner(os.Stdin)
     for scanner.Scan() {
         line := scanner.Text()
+        if !strings.Contains(line, ":") {
+            line += ":443"
+        }
         if strings.Contains(line, "/") {
-            ip, ipnet, err := net.ParseCIDR(line)
+            parts := strings.Split(line, ":")
+            cidr := parts[0]
+            port := parts[1]
+            ip, ipnet, err := net.ParseCIDR(cidr)
             if err != nil {
                 fmt.Fprintln(os.Stderr, "skipping", line, err)
                 continue
@@ -92,7 +94,7 @@ func main() {
             fmt.Fprintln(os.Stderr, "scanning", line)
             for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); ip = netaddr.IPAdd(ip, 1) {
                 waitgrp.Add(1)
-                channel <- ip.String()
+                channel <- ip.String() + ":" + port
             }
         } else {
             fmt.Fprintln(os.Stderr, "scanning", line)
