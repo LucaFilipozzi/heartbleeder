@@ -31,10 +31,6 @@ E 192.168.1.19:443
 N 192.168.1.32:443
 ```
 
-```text
-$ cat /path/to/input.txt | go run heartbleeder.go
-```
-
 Requires Go version >= 1.2.
 
 ## credits
