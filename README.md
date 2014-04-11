@@ -23,7 +23,7 @@ www.example.com
 Run the script against the input file:
 
 ```text
-$ cd go/src/github.com/LucaFilipozzi/heartbleeder
+$ cd ~/go/src/github.com/LucaFilipozzi/heartbleeder
 $ cat /path/to/input.txt | go heartbleader.go
 N www.example.com:443
 Y 192.168.1.1:443
@@ -33,10 +33,10 @@ N 192.168.1.18:443
 E 192.168.1.19:443
 ...
 N 192.168.1.32:443
-N 192.168.2.1:443
+N 192.168.2.0:443
 ...
 N 192.168.2.255:443
-N 192.168.2.1:8443
+N 192.168.2.0:8443
 ...
 N 192.168.2.255:8443
 ```
@@ -44,11 +44,12 @@ N 192.168.2.255:8443
 Or build an executable:
 
 ```text
-$ cd go/src/github.com/LucaFilipozzi/heartbleeder
+$ cd ~/go/src/github.com/LucaFilipozzi/heartbleeder
 $ go install
 ```
 
 And run it against the input file:
+
 ```text
 $ cat /path/to/input.txt | ~/go/bin/heartbleeder
 N www.example.com:443
@@ -59,7 +60,7 @@ N 192.168.2.255:8443
 The format of the output is in two columns:
 
 1. result code where Y indicates vulnerable, N indicates not vulnerable or not reachable and E indicates an error occurred
-2. the IPv4 address and port scanned
+2. the IPv4 address or hostname and the port scanned
 
 ## installation
 
@@ -80,6 +81,11 @@ $ go get github.com/LucaFilipozzi/heartbleeder
 ```
 
 should result in a 'heartbleeder' executable in $GOPATH/bin
+
+## improvements
+
+* prevent scanning the network and broadcast addresses of a CIDR
+* support scanning of StartTLS-enabled protocols
 
 ## credits
 
