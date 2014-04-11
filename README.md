@@ -66,7 +66,7 @@ The format of the output is in two columns:
 
 Requires [Go](http://golang.org/) version >= 1.2.
 
-Requires https://github.com/ziutek/utils.
+Requires https://github.com/mikioh/ipaddr.
 
 On a typical Linux box with Go installed in /usr/local/go, the following:
 
@@ -76,7 +76,7 @@ $ export GOPATH=$HOME/go
 $ export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
 $ mkdir -p $GOPATH/{bin,pkg,src}
 $ cd $GOPATH
-$ go get github.com/ziutek/utils
+$ go get github.com/mikioh/ipaddr
 $ go get github.com/LucaFilipozzi/heartbleeder
 ```
 
