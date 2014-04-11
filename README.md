@@ -56,6 +56,11 @@ N www.example.com:443
 N 192.168.2.255:8443
 ```
 
+The format of the output is in two columns:
+
+1. result code where Y indicates vulnerable, N indicates not vulnerable or not reachable and E indicates an error occurred
+2. the IPv4 address and port scanned
+
 ## installation
 
 Requires [Go](http://golang.org/) version >= 1.2.
@@ -68,9 +73,8 @@ On a typical Linux box with Go installed in /usr/local/go, the following:
 $ export GOROOT=/usr/local/go
 $ export GOPATH=$HOME/go
 $ export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
-$ mkdir $HOME/go
-$ mkdir $HOME/go/{bin,pkg,src}
-$ cd $HOME/go
+$ mkdir -p $GOPATH/{bin,pkg,src}
+$ cd $GOPATH
 $ go get github.com/ziutek/utils
 $ go get github.com/LucaFilipozzi/heartbleeder
 ```
