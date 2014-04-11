@@ -9,7 +9,7 @@ import (
     "sync"
     "time"
 
-    "github.com/ziutek/utils/netaddr"
+    "github.com/mikioh/ipaddr"
 
     "github.com/LucaFilipozzi/heartbleeder/tls"
 )
@@ -87,15 +87,23 @@ func main() {
             parts := strings.Split(line, ":")
             cidr := parts[0]
             port := parts[1]
+
             ip, ipnet, err := net.ParseCIDR(cidr)
             if err != nil {
                 fmt.Fprintln(os.Stderr, "skipping", line, err)
                 continue
             }
+
+            nbits, _ := ipnet.Mask.Size()
+            prefix, err := ipaddr.NewPrefix(ipnet.IP, nbits)
+            if err != nil {
+                fmt.Fprintln(os.Stdout, "skipping", line, err)
+            }
+
             fmt.Fprintln(os.Stderr, "scanning", line)
-            for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); ip = netaddr.IPAdd(ip, 1) {
+            for host := range prefix.HostIter(ip) {
                 waitgrp.Add(1)
-                channel <- ip.String() + ":" + port
+                channel <- host.String() + ":" + port
             }
         } else {
             fmt.Fprintln(os.Stderr, "scanning", line)

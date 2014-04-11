@@ -84,6 +84,7 @@ should result in a 'heartbleeder' executable in $GOPATH/bin
 
 ## improvements
 
+* incorporate improvements from Jonathan Rudenbert's trunk
 * prevent scanning the network and broadcast addresses of a CIDR
 * support scanning of StartTLS-enabled protocols
 
