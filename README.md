@@ -59,7 +59,7 @@ Y,www.example.com,443,heartbeat vulnerable!
 N,192.168.2.255,8443,tcp connection failed
 ```
 
-The output is CSV columns:
+The output is in CSV format with the following columns:
 
 1. the result code (Y indicates vulnerable, N indicates not vulnerable or not reachable and E indicates an error occurred)
 2. the mode ('https', 'ftp', 'imap', 'pop3', 'smtp')
@@ -78,10 +78,9 @@ On a typical Linux box with Go installed in /usr/local/go, the following:
 ```text
 $ export GOROOT=/usr/local/go
 $ export GOPATH=$HOME/go
-$ export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
+$ export PATH=$GOPATH/bin:$GOROOT/bin:$PATH
 $ mkdir -p $GOPATH/{bin,pkg,src}
 $ cd $GOPATH
-$ go get github.com/mikioh/ipaddr
 $ go get github.com/LucaFilipozzi/heartbleeder
 ```
 
