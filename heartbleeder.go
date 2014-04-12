@@ -7,6 +7,7 @@ import (
     "fmt"
     "net"
     "os"
+    "regexp"
     "strings"
     "sync"
     "time"
@@ -17,61 +18,137 @@ import (
 
 type Command struct {
     mode string
-    target string
+    host string
+    port string
+    timeout time.Duration
 }
 
 type Response struct {
-    rval string
-    rstr string
+    result string
+    reason string
 }
 
-func test_for_heartbleed(target string, timeout time.Duration) (response Response) {
-    dialer := &net.Dialer{Timeout: timeout}
+func test_for_heartbleed(command Command) Response {
+    var netConn net.Conn
+    var tlsConn *tls.Conn
+    var err error
+    var line string
+    var greetingPattern string
+    var responsePattern string
+    var starttlsRequest string
 
-    c, err := tls.DialWithDialer(dialer, "tcp", target, &tls.Config{InsecureSkipVerify: true})
+    // establish a tcp connection
+    netConn, err = net.DialTimeout("tcp", command.host + ":" + command.port, command.timeout)
     if err != nil {
-        return Response{"N", "connection refused"}
+        return Response{"N", "tcp connection failed"}
     }
-    defer c.Close()
+    err = netConn.SetDeadline(time.Now().Add(2 * command.timeout))
+    if err != nil {
+        return Response{"N", "tcp connection failed"}
+    }
 
-    err = c.WriteHeartbeat(1, nil)
+    if command.mode != "https" {
+        switch command.mode {
+            case "ftp":
+                greetingPattern = "^220 "
+                starttlsRequest = "AUTH TLS"
+                responsePattern = "^234 "
+            case "imap":
+                greetingPattern = "^\\* "
+                starttlsRequest = "a001 STARTTLS"
+                responsePattern = "^a001 OK "
+            case "pop3":
+                greetingPattern = "^\\+OK "
+                starttlsRequest = "STLS"
+                responsePattern = "^\\+OK "
+            case "smtp":
+                greetingPattern = "^220 "
+                starttlsRequest = "STARTTLS\r\n"
+                responsePattern = "^220 "
+        }
+
+        netConnReader := bufio.NewReader(netConn)
+        netConnWriter := bufio.NewWriter(netConn)
+
+        // loop until greeting seen or timeout
+        greetingRegexp := regexp.MustCompile(greetingPattern)
+        for {
+            line, err = netConnReader.ReadString('\n')
+            if err != nil {
+                return Response{"N", "starttls greeting failed"}
+            }
+            if greetingRegexp.MatchString(strings.TrimRight(line, "\r")) {
+                break
+            }
+        }
+
+        // send starttls request
+        _, err = netConnWriter.WriteString(starttlsRequest)
+        if err != nil {
+            return Response{"N", "starttls request failed"}
+        }
+        err = netConnWriter.Flush()
+        if err != nil {
+            return Response{"N", "starttls request failed"}
+        }
+
+        // recv starttls response
+        line, err = netConnReader.ReadString('\n')
+        if err != nil {
+            return Response{"N", "starttls response failed"}
+        }
+        responseRegexp := regexp.MustCompile(responsePattern)
+        if !responseRegexp.MatchString(strings.TrimRight(line, "\r")) {
+            return Response{"N", "starttls response failed"}
+        }
+    }
+
+    // initiate tls handshake
+    tlsConn = tls.Client(netConn, &tls.Config{InsecureSkipVerify: true, ServerName: command.host})
+    err = tlsConn.Handshake()
+    if err != nil {
+        return Response{"N", "tls handshake failed"}
+    }
+
+    // send heartbeat payload
+    err = tlsConn.WriteHeartbeat(1, nil)
     if err == tls.ErrNoHeartbeat {
         return Response{"N", "heartbeat disabled"}
     }
     if err != nil {
-        return Response{"E", "error injecting payload"}
+        return Response{"N", "error injecting payload"}
     }
 
+    // recv heartbeat response
     readErr := make(chan error)
     go func() {
-        _, _, err := c.ReadHeartbeat()
+        _, _, err := tlsConn.ReadHeartbeat()
         readErr <- err
     }()
 
     select {
         case err := <-readErr:
             if err == nil {
-                return Response{"Y", "heartbeat enabled and vulnerable!"}
+                return Response{"Y", "heartbeat vulnerable!"}
             } else {
-                return Response{"N", "heartbeat enabled but not vulnerable"}
+                return Response{"N", "heartbeat not vulnerable"}
             }
-        case <-time.After(timeout):
-            return Response{"N", "heartbeat enabled but timed out after payload injection"}
+        case <-time.After(command.timeout):
+            return Response{"N", "heartbeat timed out"}
     }
 }
 
-func worker(channel chan Command, wg *sync.WaitGroup, timeout time.Duration, verbose bool, writer *csv.Writer) {
-    record := make([]string,3)
+func worker(channel chan Command, waitgrp *sync.WaitGroup, writer *csv.Writer) {
+    record := make([]string,5)
     for command := range channel {
-        if verbose {
-            fmt.Fprintln(os.Stderr, "checking", command.target)
-        }
-        response := test_for_heartbleed(command.target, timeout)
-        record[0] = response.rval
-        record[1] = command.target
-        record[2] = response.rstr
+        response := test_for_heartbleed(command)
+        record[0] = response.result
+        record[1] = command.mode
+        record[2] = command.host
+        record[3] = command.port
+        record[4] = response.reason
         writer.Write(record)
-        wg.Done()
+        waitgrp.Done()
     }
 }
 
@@ -96,27 +173,36 @@ func main() {
 
     // spin up the workers
     for i := 0; i < *workersFlag; i++ {
-        go worker(channel, waitgrp, *timeoutFlag, *verboseFlag, writer)
+        go worker(channel, waitgrp, writer)
     }
 
-    // scan each hostname or CIDR address read from stdin
+    // process each line from standard input
     scanner := bufio.NewScanner(os.Stdin)
     for scanner.Scan() {
         line := scanner.Text()
-        if strings.Count(line, ":") != 2 {
+        if strings.Count(line, ",") != 2 {
             if *verboseFlag {
                 fmt.Fprintln(os.Stderr, "skipping", line, "does not parse correctly")
             }
             continue
         }
 
-        parts := strings.Split(line, ":")
+        parts := strings.Split(line, ",")
         mode := parts[0]
         spec := parts[1]
         port := parts[2]
 
-        if strings.Contains(spec, "/") {
+        switch mode {
+            case "ftp", "https", "imap", "ldap", "pop3", "smtp":
+                // do nothing - these are the valid modes
+            default:
+                if *verboseFlag {
+                    fmt.Fprintln(os.Stderr, "skipping", line, "invalid mode")
+                }
+                continue
+        }
 
+        if strings.Contains(spec, "/") {
             ip, ipnet, err := net.ParseCIDR(spec)
             if err != nil {
                 if *verboseFlag {
@@ -133,31 +219,24 @@ func main() {
                 }
             }
 
-            for _, host := range prefix.Hosts(ip) {
-                target := host.String() + ":" + port
+            for host := range prefix.HostIter(ip) {
                 if *verboseFlag {
-                    fmt.Fprintln(os.Stderr, "scanning", target)
+                    fmt.Fprintln(os.Stderr, "scanning", mode, host.String(), port)
                 }
                 waitgrp.Add(1)
-                channel <- Command{mode, target}
+                channel <- Command{mode, host.String(), port, *timeoutFlag}
             }
-
         } else {
-
-            target := spec + ":" + port
             if *verboseFlag {
-                fmt.Fprintln(os.Stderr, "scanning", target)
+                fmt.Fprintln(os.Stderr, "scanning", mode, spec, port)
             }
             waitgrp.Add(1)
-            channel <- Command{mode, target}
-
+            channel <- Command{mode, spec, port, *timeoutFlag}
         }
     }
 
-    // wait for all workers to finish
+    // wait for all workers to finish and clean up
     waitgrp.Wait()
     close(channel)
-
     writer.Flush()
-
 }
