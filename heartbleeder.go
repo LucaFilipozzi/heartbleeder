@@ -20,15 +20,22 @@ type Command struct {
     mode string
     host string
     port string
-    timeout time.Duration
 }
 
 type Response struct {
+    mode string
+    host string
+    port string
     result string
     reason string
 }
 
-func test_for_heartbleed(command Command) Response {
+func ProcessCommand(command Command, timeout time.Duration) (response Response) {
+    response.mode = command.mode
+    response.host = command.host
+    response.port = command.port
+    response.result = "N"
+
     var netConn net.Conn
     var tlsConn *tls.Conn
     var err error
@@ -38,13 +45,15 @@ func test_for_heartbleed(command Command) Response {
     var starttlsRequest string
 
     // establish a tcp connection
-    netConn, err = net.DialTimeout("tcp", command.host + ":" + command.port, command.timeout)
+    netConn, err = net.DialTimeout("tcp", command.host + ":" + command.port, timeout)
     if err != nil {
-        return Response{"N", "tcp connection failed"}
+        response.reason = "tcp connection failed"
+        return
     }
-    err = netConn.SetDeadline(time.Now().Add(2 * command.timeout))
+    err = netConn.SetDeadline(time.Now().Add(2 * timeout))
     if err != nil {
-        return Response{"N", "tcp connection failed"}
+        response.reason = "tcp connection failed"
+        return
     }
 
     if command.mode != "https" {
@@ -75,7 +84,8 @@ func test_for_heartbleed(command Command) Response {
         for {
             line, err = netConnReader.ReadString('\n')
             if err != nil {
-                return Response{"N", "starttls greeting failed"}
+                response.reason = "starttls greeting failed"
+                return
             }
             if greetingRegexp.MatchString(strings.TrimRight(line, "\r")) {
                 break
@@ -85,21 +95,25 @@ func test_for_heartbleed(command Command) Response {
         // send starttls request
         _, err = netConnWriter.WriteString(starttlsRequest)
         if err != nil {
-            return Response{"N", "starttls request failed"}
+            response.reason = "starttls request failed"
+            return
         }
         err = netConnWriter.Flush()
         if err != nil {
-            return Response{"N", "starttls request failed"}
+            response.reason = "starttls request failed"
+            return
         }
 
         // recv starttls response
         line, err = netConnReader.ReadString('\n')
         if err != nil {
-            return Response{"N", "starttls response failed"}
+            response.reason = "starttls response failed"
+            return
         }
         responseRegexp := regexp.MustCompile(responsePattern)
         if !responseRegexp.MatchString(strings.TrimRight(line, "\r")) {
-            return Response{"N", "starttls response failed"}
+            response.reason = "starttls response failed"
+            return
         }
     }
 
@@ -107,16 +121,20 @@ func test_for_heartbleed(command Command) Response {
     tlsConn = tls.Client(netConn, &tls.Config{InsecureSkipVerify: true, ServerName: command.host})
     err = tlsConn.Handshake()
     if err != nil {
-        return Response{"N", "tls handshake failed"}
+        response.reason = "tls handshake failed"
+        return
     }
 
     // send heartbeat payload
     err = tlsConn.WriteHeartbeat(1, nil)
     if err == tls.ErrNoHeartbeat {
-        return Response{"N", "heartbeat disabled"}
+        response.reason = "heartbeat disabled"
+        return
     }
     if err != nil {
-        return Response{"N", "error injecting payload"}
+        response.reason = "E"
+        response.reason = "error injnecting payload"
+        return
     }
 
     // recv heartbeat response
@@ -129,30 +147,21 @@ func test_for_heartbleed(command Command) Response {
     select {
         case err := <-readErr:
             if err == nil {
-                return Response{"Y", "heartbeat vulnerable!"}
+                response.result = "Y"
+                response.reason = "heartbeat vulnerable!"
+                return
             } else {
-                return Response{"N", "heartbeat not vulnerable"}
+                response.reason = "heartbeat not vulnerable"
+                return
             }
-        case <-time.After(command.timeout):
-            return Response{"N", "heartbeat timed out"}
-    }
-}
-
-func worker(channel chan Command, waitgrp *sync.WaitGroup, writer *csv.Writer) {
-    record := make([]string,5)
-    for command := range channel {
-        response := test_for_heartbleed(command)
-        record[0] = response.result
-        record[1] = command.mode
-        record[2] = command.host
-        record[3] = command.port
-        record[4] = response.reason
-        writer.Write(record)
-        waitgrp.Done()
+        case <-time.After(timeout):
+            response.reason = "heartbeat timed out"
+            return
     }
 }
 
 func main() {
+    // parse command line arguments
     verboseFlag := flag.Bool("verbose", false, "enable verbosity on stderr")
     timeoutFlag := flag.Duration("timeout", 1*time.Second, "Timeout after sending heartbeat")
     workersFlag := flag.Int("workers", 512, "number of workers with which to scan targets")
@@ -165,18 +174,38 @@ func main() {
     // set up a csv writer that outputs to stdout
     writer := csv.NewWriter(os.Stdout)
 
-    // set up the channel for worker communication
-    channel := make(chan Command, 2 * *workersFlag)
+    // set up the channels for worker communication
+    commandChannel := make(chan Command, 4096)
+    responseChannel := make(chan Response, 4096)
 
     // set up a wait group to track the workers
     waitgrp := &sync.WaitGroup{}
 
-    // spin up the workers
+    // spin up the commandChannel handlers
     for i := 0; i < *workersFlag; i++ {
-        go worker(channel, waitgrp, writer)
+        go func() {
+            for command := range commandChannel {
+                responseChannel <- ProcessCommand(command, *timeoutFlag)
+                waitgrp.Done()
+            }
+        }()
     }
 
-    // process each line from standard input
+    // spin up the responseChannel handler
+    go func() {
+        for {
+            select {
+                case response := <-responseChannel:
+                    writer.Write([]string{response.result, response.mode, response.host, response.port, response.reason})
+                    writer.Flush()
+                case <-time.After(30 * time.Second):
+                    fmt.Fprintln(os.Stderr, "timed out")
+                    os.Exit(1)
+            }
+        }
+    }()
+
+    // process each line from standard input and issue command
     scanner := bufio.NewScanner(os.Stdin)
     for scanner.Scan() {
         line := scanner.Text()
@@ -193,7 +222,7 @@ func main() {
         port := parts[2]
 
         switch mode {
-            case "ftp", "https", "imap", "ldap", "pop3", "smtp":
+            case "ftp", "https", "imap", "pop3", "smtp":
                 // do nothing - these are the valid modes
             default:
                 if *verboseFlag {
@@ -224,19 +253,20 @@ func main() {
                     fmt.Fprintln(os.Stderr, "scanning", mode, host.String(), port)
                 }
                 waitgrp.Add(1)
-                channel <- Command{mode, host.String(), port, *timeoutFlag}
+                commandChannel <- Command{mode, host.String(), port}
             }
         } else {
             if *verboseFlag {
                 fmt.Fprintln(os.Stderr, "scanning", mode, spec, port)
             }
             waitgrp.Add(1)
-            channel <- Command{mode, spec, port, *timeoutFlag}
+            commandChannel <- Command{mode, spec, port}
         }
     }
 
     // wait for all workers to finish and clean up
     waitgrp.Wait()
-    close(channel)
+    close(commandChannel)
+    close(responseChannel)
     writer.Flush()
 }
