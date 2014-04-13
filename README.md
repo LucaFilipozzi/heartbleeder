@@ -26,21 +26,21 @@ Run the script against the input file:
 ```text
 $ cd ~/go/src/github.com/LucaFilipozzi/heartbleeder
 $ cat /path/to/input.txt | go heartbleader.go
-Y,www.example.com,443,heartbeat enabled and vulnerable!
-Y,192.168.1.1,443,heartbeat vulnerable!
-Y,192.168.1.1,443,heartbeat vulnerable!
-N,192.168.1.16,443,tcp connection failed
-N,192.168.1.17,443,tcp connection failed
-N,192.168.1.18,443,tcp connection failed
-E,192.168.1.19,443,error injecting payload
+Y,https,www.example.com,443,heartbeat enabled and vulnerable!
+Y,https,192.168.1.1,443,heartbeat vulnerable!
+Y,https,192.168.1.1,443,heartbeat vulnerable!
+N,https,192.168.1.16,443,tcp connection failed
+N,https,192.168.1.17,443,tcp connection failed
+N,https,192.168.1.18,443,tcp connection failed
+E,https,192.168.1.19,443,error injecting payload
 ...
-N,192.168.1.32,443,tcp connection failed
-N,192.168.2.0,443,heartbeat not vulnerable
+N,https,192.168.1.32,443,tcp connection failed
+N,https,192.168.2.0,443,heartbeat not vulnerable
 ...
-N,192.168.2.255,443,heartbeat not vulnerable
-N,192.168.2.0,8443,heartbeat not vulnerable
+N,https,192.168.2.255,443,heartbeat not vulnerable
+N,https,192.168.2.0,8443,heartbeat not vulnerable
 ...
-N,192.168.2.255,8443,tcp connection failed
+N,https,192.168.2.255,8443,tcp connection failed
 ```
 
 Or build an executable:
@@ -54,18 +54,31 @@ And run it against the input file:
 
 ```text
 $ cat /path/to/input.txt | ~/go/bin/heartbleeder
-Y,www.example.com,443,heartbeat vulnerable!
+Y,https,www.example.com,443,heartbeat vulnerable!
 ...
-N,192.168.2.255,8443,tcp connection failed
+N,https,192.168.2.255,8443,tcp connection failed
 ```
 
 The output is in CSV format with the following columns:
 
-1. the result code (Y indicates vulnerable, N indicates not vulnerable or not reachable and E indicates an error occurred)
+1. the result code (Y indicates vulnerable, N indicates not vulnerable or not
+   reachable and E indicates an error occurred)
 2. the mode ('https', 'ftp', 'imap', 'pop3', 'smtp')
 3. the host / IPv4 address
 4. the port
 5. the reason for the given result code
+
+Which allows for fast identification of entries that are marked as vulnerable:
+
+```text
+$ cat /path/to/output.csv | grep -E '^Y,'
+Y,https,www.example.com,443,heartbeat enabled and vulnerable!
+Y,https,192.168.1.1,443,heartbeat vulnerable!
+Y,https,192.168.1.1,443,heartbeat vulnerable!
+```
+
+Please note that the timeout is purposely set very small.  This means that some
+slow-responding hosts may be misdiagnosed as unreachable.
 
 ## installation
 

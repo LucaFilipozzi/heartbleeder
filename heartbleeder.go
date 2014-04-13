@@ -45,12 +45,12 @@ func ProcessCommand(command Command, timeout time.Duration) (response Response) 
     var starttlsRequest string
 
     // establish a tcp connection
-    netConn, err = net.DialTimeout("tcp", command.host + ":" + command.port, timeout)
+    netConn, err = net.DialTimeout("tcp", command.host + ":" + command.port, 1 * time.Second)
     if err != nil {
         response.reason = "tcp connection failed"
         return
     }
-    err = netConn.SetDeadline(time.Now().Add(2 * timeout))
+    err = netConn.SetDeadline(time.Now().Add(9 * time.Second))
     if err != nil {
         response.reason = "tcp connection failed"
         return
@@ -163,7 +163,7 @@ func ProcessCommand(command Command, timeout time.Duration) (response Response) 
 func main() {
     // parse command line arguments
     verboseFlag := flag.Bool("verbose", false, "enable verbosity on stderr")
-    timeoutFlag := flag.Duration("timeout", 1*time.Second, "Timeout after sending heartbeat")
+    timeoutFlag := flag.Duration("timeout", 2*time.Second, "timeout after sending heartbeat")
     workersFlag := flag.Int("workers", 512, "number of workers with which to scan targets")
     flag.Usage = func() {
         fmt.Fprintf(os.Stderr, "Options:\n")
